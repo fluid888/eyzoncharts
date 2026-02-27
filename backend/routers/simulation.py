@@ -5,10 +5,18 @@ Endpoints:
   POST /api/simulate   — run Monte Carlo + optional Kelly sweep + interpret
   POST /api/kelly      — Kelly sweep only (fast, no full simulation)
   POST /api/interpret  — interpret pre-computed MC results (pass-through)
+
+v2 changes:
+  - sizingMode: added 'r_compounded' (new default)
+  - tailRiskMode: 'none' | 'fat_tail' | 'regime_switch'
+  - stressVol: float, vol multiplier for regime_switch mode
+  - studentTNu: optional float, override Student-t df for fat_tail mode
+  - simMode default changed to 'block_bootstrap'
+  - sizingMode default changed to 'r_compounded'
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, validator
@@ -36,9 +44,11 @@ class Trade(BaseModel):
 
 
 class SimConfig(BaseModel):
-    simMode:       str   = Field("shuffle", pattern="^(shuffle|bootstrap|block_bootstrap)$")
+    simMode:       str   = Field("block_bootstrap", pattern="^(shuffle|bootstrap|block_bootstrap)$")
     numSims:       int   = Field(1000,  ge=1,    le=50_000)
-    sizingMode:    str   = Field("pnl_direct", pattern="^(pnl_direct|r_fixed_fraction)$")
+    sizingMode:    str   = Field("r_compounded",
+                                 pattern="^(pnl_direct|r_fixed_fraction|r_compounded)$")
+    tailRiskMode:  str   = Field("none", pattern="^(none|fat_tail|regime_switch)$")
     fraction:      float = Field(0.01,  gt=0,    le=1.0)
     tradesPerYear: int   = Field(50,    ge=1,    le=10_000)
     blockSize:     int   = Field(5,     ge=2,    le=500)
@@ -46,6 +56,8 @@ class SimConfig(BaseModel):
     seed:          int   = Field(42,    ge=0)
     startEquity:   float = Field(10_000, gt=0)
     runKelly:      bool  = True
+    stressVol:     float = Field(2.5,   ge=1.0,  le=10.0)
+    studentTNu:    Optional[float] = Field(None, ge=3.0, le=30.0)
 
 
 class SimulateRequest(BaseModel):
@@ -68,11 +80,6 @@ class InterpretRequest(BaseModel):
 
 @router.post("/simulate")
 def simulate(req: SimulateRequest) -> dict[str, Any]:
-    """
-    Run the full Monte Carlo simulation and return:
-      - mc_result:    raw simulation output (envelopes, distributions, metrics)
-      - interpretation: deterministic risk assessment from mc_interpreter
-    """
     if len(req.trades) < 2:
         raise HTTPException(status_code=422, detail="At least 2 trades required.")
 
@@ -94,10 +101,6 @@ def simulate(req: SimulateRequest) -> dict[str, Any]:
 
 @router.post("/kelly")
 def kelly(req: KellyRequest) -> dict[str, Any]:
-    """
-    Run only the Kelly fraction sensitivity sweep (fast, ~400 sims/point).
-    Useful for the settings panel without re-running the full simulation.
-    """
     if len(req.trades) < 2:
         raise HTTPException(status_code=422, detail="At least 2 trades required.")
 
@@ -109,8 +112,4 @@ def kelly(req: KellyRequest) -> dict[str, Any]:
 
 @router.post("/interpret")
 def interpret(req: InterpretRequest) -> dict[str, Any]:
-    """
-    Re-interpret pre-computed MC results.
-    Useful when the frontend stores raw MC output and wants updated insights.
-    """
     return interpret_monte_carlo_results(req.data)
