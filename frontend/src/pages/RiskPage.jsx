@@ -950,8 +950,8 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                       const timeoutId   = setTimeout(() => timeoutCtrl.abort(), 30000);
 
                       try {
-                        console.log("📡 POSTing to http://localhost:8000/api/simulate ...");
-                        const resp = await fetch("http://localhost:8000/api/simulate", {
+                        console.log("📡 POSTing to https://eyzoncharts-production.up.railway.app/api/simulate ...");
+                        const resp = await fetch("https://eyzoncharts-production.up.railway.app/api/simulate", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
                           body:    JSON.stringify(payload),
@@ -975,7 +975,7 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                         if (mcCfg.runKelly && !runState.cancelled) {
                           try {
                             const kellyPayload = { ...payload, config: { ...payload.config, runKelly: true } };
-                            const kellyResp = await fetch("http://localhost:8000/api/kelly", {
+                            const kellyResp = await fetch("https://eyzoncharts-production.up.railway.app/api/kelly", {
                               method:  "POST",
                               headers: { "Content-Type": "application/json" },
                               body:    JSON.stringify(kellyPayload),
