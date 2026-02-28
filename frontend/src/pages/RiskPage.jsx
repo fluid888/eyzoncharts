@@ -933,7 +933,7 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                           seed:          mcCfg.seed,
                           startEquity:   startEq,
                           runKelly:      false,
-                          earlyStop:     false
+                          earlyStop:     false,
                         },
                       };
 
@@ -1147,9 +1147,18 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                           <ResponsiveContainer width="100%" height={envelopeData.length>200?280:240}>
                             <ComposedChart data={envelopeData} margin={{top:4,right:4,left:0,bottom:0}}>
                               <CartesianGrid stroke="#252525" vertical={false}/>
-                              <XAxis dataKey="t" tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false}
+                              <XAxis dataKey="t" type="number"
+                                domain={[0, envelopeData.length > 0 ? envelopeData[envelopeData.length-1].t : 'dataMax']}
+                                ticks={(() => {
+                                  const maxT = envelopeData.length > 0 ? envelopeData[envelopeData.length-1].t : 0;
+                                  const step = maxT <= 100 ? 10 : maxT <= 300 ? 50 : maxT <= 1000 ? 100 : 200;
+                                  const arr = [];
+                                  for (let i = 0; i <= maxT; i += step) arr.push(i);
+                                  if (arr[arr.length-1] !== maxT) arr.push(maxT);
+                                  return arr;
+                                })()}
+                                tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false}
                                 label={{value:"Trade #",position:"insideBottomRight",offset:-4,fill:MUTED,fontSize:9}}
-                                interval={Math.max(0, Math.floor(envelopeData.length / 12) - 1)}
                                 tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}
                               />
                               <YAxis tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false} width={50}
