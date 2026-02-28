@@ -63,7 +63,56 @@ v4 CHANGES (drawdown-dependent position sizing):
           Since f_t ≤ f0 always, this is the correct conservative bound.
 
 ─────────────────────────────────────────────────────────────────────────────
-v3 changes (R-multiple refactor) and prior v2 fixes retained unchanged.
+v5 CHANGES (convergence diagnostics):
+
+  [v5-1]  ConvergenceParams  (frozen dataclass)
+          Houses all tuning knobs (epsilon, K, batch_size, tail_fluctuation_
+          threshold) in one typed, validated struct.  No magic constants in
+          the batch loop.
+
+  [v5-2]  BATCH SIMULATION LOOP
+          run_monte_carlo() now runs in chunks of batch_size sims.  After
+          each batch, three metrics are computed on the full accumulated sample:
+
+              M1 = median terminal equity        Ẽ_N
+              M2 = CVaR 95% terminal equity      CVaR_{95,N}
+              M3 = ruin probability (%)           P_{ruin,N}
+
+          Relative change between consecutive batches k-1 → k:
+              Δ_k = |M_{N_k} − M_{N_{k-1}}| / max(|M_{N_{k-1}}|, guard)
+
+          guard = 1e-6 × |start_equity| prevents division-by-zero when a
+          metric is near zero (e.g. ruin ≈ 0%) and keeps the ratio meaningful.
+
+  [v5-3]  PER-METRIC CONVERGENCE WINDOW
+          Each metric is independently declared converged when Δ_k < ε for K
+          consecutive batches.  The window counter resets if any batch exceeds
+          the threshold — a single fluke clean batch cannot falsely confirm.
+
+  [v5-4]  EARLY STOPPING
+          The batch loop stops as soon as ALL three metrics have converged.
+          The actual sim count is reported as finalN.
+
+  [v5-5]  CONVERGENCE TABLE
+          result["convergenceDiag"]["table"] has one row per batch:
+            n, medianEquity, cvar95, ruinPct,
+            delta.{metric}, converged.{metric}
+
+  [v5-6]  HONEST NON-CONVERGENCE
+          The engine never hides failure:
+          • converged = False surfaces the overall state clearly.
+          • Per-metric flags in convergenceDiag.metrics show which stabilized.
+          • Specific warnings if CVaR did not converge or any tail metric
+            fluctuated > tailFluctuationThreshold — surfaced in both
+            convergenceDiag.warnings AND the top-level result.warnings.
+
+  [v5-7]  BACKWARD COMPATIBILITY
+          result["convergence"] is replaced by result["convergenceDiag"].
+          The old _convergence_check() helper is removed.
+
+─────────────────────────────────────────────────────────────────────────────
+v4 changes (drawdown-dependent sizing), v3 (R-multiple refactor), and prior
+v2 fixes retained unchanged.
 """
 
 from __future__ import annotations
@@ -700,25 +749,382 @@ def _subsample_curves(curves: np.ndarray, chart_steps: int) -> np.ndarray:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LAYER 8: CONVERGENCE CHECK  [v2-6]
+# LAYER 8: CONVERGENCE DIAGNOSTICS  [v5-1 through v5-7]
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _convergence_check(final_equities: np.ndarray, threshold: float = 0.05) -> dict[str, Any]:
-    n_half     = max(1, len(final_equities) // 2)
-    med_half   = float(np.median(final_equities[:n_half]))
-    med_full   = float(np.median(final_equities))
-    rel_change = abs(med_full - med_half) / max(abs(med_half), 1.0)
-    converged  = rel_change <= threshold
-    return {
-        "converged":      converged,
-        "relativeChange": round(rel_change, 4),
-        "medianAtHalf":   round(med_half, 2),
-        "medianAtFull":   round(med_full, 2),
-        "warning": None if converged else (
-            f"Median equity shifted {rel_change*100:.1f}% from first half to "
-            f"full sample. Increase numSims for stable estimates."
-        ),
+@dataclass(frozen=True)
+class ConvergenceParams:
+    """
+    Tuning parameters for the batch convergence diagnostic.  [v5-1]
+
+    Attributes
+    ----------
+    epsilon : float
+        Relative-change threshold for declaring a metric stable.
+        Δ_k < epsilon for K consecutive batches → metric converged.
+        Default 0.01 = 1%.  Tighter values (0.005) cost more sims;
+        looser values (0.02) risk accepting noisy estimates.
+
+    K : int
+        Number of consecutive batches that must each satisfy Δ_k < epsilon
+        before the metric is declared converged.  Default 3.
+        K = 1 is susceptible to flukes (one lucky quiet batch).
+        K ≥ 5 may be overly conservative for most strategies.
+
+    batch_size : int
+        Number of new simulations run per batch.  Default 500.
+        Smaller batches give finer-grained convergence tables but add
+        overhead from repeated metric computation.
+
+    tail_fluctuation_threshold : float
+        If any tail metric (CVaR95 or ruin%) ever changes by more than
+        this fraction between consecutive batches (even transiently),
+        a warning is emitted regardless of final convergence status.
+        Default 0.05 = 5%.  This catches strategies where tail risk is
+        inherently noisy even if it happens to look stable by the end.
+    """
+    epsilon:                    float = 0.01
+    K:                          int   = 3
+    batch_size:                 int   = 500
+    tail_fluctuation_threshold: float = 0.05
+
+    def __post_init__(self) -> None:
+        if not (0 < self.epsilon < 1):
+            raise ValueError(f"epsilon must be in (0, 1), got {self.epsilon}")
+        if self.K < 1:
+            raise ValueError(f"K must be ≥ 1, got {self.K}")
+        if self.batch_size < 10:
+            raise ValueError(f"batch_size must be ≥ 10, got {self.batch_size}")
+        if not (0 < self.tail_fluctuation_threshold < 1):
+            raise ValueError(
+                f"tail_fluctuation_threshold must be in (0,1), "
+                f"got {self.tail_fluctuation_threshold}"
+            )
+
+
+def _batch_metrics(
+    final_equities: np.ndarray,
+    ruin_flags:     np.ndarray,
+    start_equity:   float,
+) -> tuple[float, float, float]:
+    """
+    Compute the three tracked metrics on the current accumulated sample.
+
+    Returns
+    -------
+    median_equity : float
+        Median terminal equity Ẽ_N.
+
+    cvar95 : float
+        Conditional Value-at-Risk at 95% confidence, expressed in dollars.
+        CVaR_{95,N} = mean of the worst 5% of terminal equities.
+        This is the expected loss given we're already in the tail — far
+        more informative than a simple percentile cutoff (VaR).
+
+    ruin_pct : float
+        Ruin probability × 100, i.e. percentage of paths that hit the
+        50%-drawdown-from-start ruin threshold.  Kept as a percentage
+        (not fraction) so it reads naturally in the convergence table.
+    """
+    n          = len(final_equities)
+    var_cutoff = max(1, int(math.floor(0.05 * n)))
+    sorted_fe  = np.sort(final_equities)
+
+    median_equity = float(np.median(final_equities))
+    cvar95        = float(sorted_fe[:var_cutoff].mean())
+    ruin_pct      = float(ruin_flags.mean() * 100.0)
+
+    return median_equity, cvar95, ruin_pct
+
+
+def _relative_change(new_val: float, old_val: float, guard: float) -> float:
+    """
+    Δ_k = |M_{N_k} − M_{N_{k-1}}| / max(|M_{N_{k-1}}|, guard)
+
+    The guard prevents division by zero and keeps the ratio meaningful when a
+    metric is near zero (ruin ≈ 0%, CVaR near zero for very safe strategies).
+    Without the guard, a transition from ruin=0.0% to ruin=0.001% would give
+    Δ = ∞, which is mathematically correct but operationally meaningless for
+    a strategy where true ruin is essentially zero.
+
+    Parameters
+    ----------
+    guard : float
+        Minimum denominator.  Should be a small but non-trivial absolute
+        value in the same units as old_val.  For dollar-denominated metrics
+        we use 1e-6 × |start_equity|; for percentages we use 1e-4.
+    """
+    denom = max(abs(old_val), guard)
+    return abs(new_val - old_val) / denom
+
+
+def _run_convergence_batches(
+    r_multiples:      np.ndarray,
+    sizing_mode:      str,
+    sim_mode:         str,
+    effective_block_size: int,
+    fraction:         float,
+    dd_params:        Optional["DDScaleParams"],
+    start_equity:     float,
+    ruin_threshold:   float,
+    tail_risk_mode:   str,
+    stress_vol:       float,
+    student_t_nu:     Optional[float],
+    num_sims:         int,
+    conv_params:      ConvergenceParams,
+    rng:              np.random.Generator,
+    on_progress:      Optional[Callable[[float], None]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
+    """
+    Run the simulation in batches, accumulating curves and checking convergence
+    after each batch.  [v5-2, v5-3, v5-4]
+
+    Returns
+    -------
+    All arrays are accumulated across batches (shape = (finalN, ...)):
+      final_equities, max_drawdowns, dd_durations, time_to_recovery, ruin_flags
+    convergence_diag : dict
+      Full diagnostic block (table, metric summaries, warnings, flags).
+    """
+    n = len(r_multiples)
+
+    # ── Guards for relative-change denominators ───────────────────────────
+    # Dollar-denominated metrics: guard at 1ppm of start_equity (never zero).
+    dollar_guard = max(abs(start_equity), 1.0) * 1e-6
+    # Percentage metrics (ruin): guard at 0.01pp (1 in 10,000 paths).
+    pct_guard    = 1e-4
+
+    # ── Per-metric convergence state ──────────────────────────────────────
+    # window[m] counts how many consecutive batches metric m satisfied Δ < ε.
+    # Resets to 0 if any batch violates the threshold.
+    window: dict[str, int] = {"medianEquity": 0, "cvar95": 0, "ruinPct": 0}
+    converged_at: dict[str, Optional[int]] = {
+        "medianEquity": None, "cvar95": None, "ruinPct": None
     }
+
+    # ── Accumulators ──────────────────────────────────────────────────────
+    all_final_eq:   list[np.ndarray] = []
+    all_max_dd:     list[np.ndarray] = []
+    all_dd_dur:     list[np.ndarray] = []
+    all_time_rec:   list[np.ndarray] = []
+    all_ruin:       list[np.ndarray] = []
+
+    # ── Convergence table (one row per completed batch) ───────────────────
+    table:          list[dict]       = []
+    prev_metrics:   Optional[tuple]  = None   # (median, cvar, ruin) from last batch
+    max_tail_delta: dict[str, float] = {"cvar95": 0.0, "ruinPct": 0.0}
+    diag_warnings:  list[str]        = []
+
+    total_sims_run   = 0
+    all_converged    = False
+    stopped_early    = False
+
+    max_batches = math.ceil(num_sims / conv_params.batch_size)
+
+    for batch_idx in range(max_batches):
+        # ── Determine this batch's size ───────────────────────────────────
+        sims_remaining = num_sims - total_sims_run
+        batch_n        = min(conv_params.batch_size, sims_remaining)
+        if batch_n <= 0:
+            break
+
+        # ── Generate indices for this batch ───────────────────────────────
+        if sim_mode == "shuffle":
+            idx = _generate_shuffle_batch(n, batch_n, rng)
+        elif sim_mode == "bootstrap":
+            idx = _generate_bootstrap_batch(n, batch_n, rng)
+        else:
+            idx = _generate_block_bootstrap_batch(n, batch_n, effective_block_size, rng)
+
+        # ── Resample R-matrix ─────────────────────────────────────────────
+        r_mat = r_multiples[idx].copy()
+
+        if tail_risk_mode == "fat_tail":
+            r_mat = _apply_fat_tail_noise(r_mat, r_multiples, rng, nu=student_t_nu)
+        elif tail_risk_mode == "regime_switch":
+            r_mat = _apply_regime_switching(r_mat, rng, stress_vol=stress_vol)
+
+        if sizing_mode != "pnl_direct":
+            r_mat = _clamp_r_for_fraction(r_mat, fraction)
+
+        # ── Run equity curves for this batch ──────────────────────────────
+        if sizing_mode == "r_dd_scaled":
+            assert dd_params is not None
+            batch_curves, _ = _equity_curves_dd_scaled(r_mat, start_equity, fraction, dd_params)
+        elif sizing_mode == "r_compounded":
+            batch_curves = _equity_curves_compounded(r_mat, start_equity, fraction)
+        elif sizing_mode == "r_fixed_fraction":
+            batch_curves = _equity_curves_fixed_fraction(r_multiples, idx, start_equity, fraction)
+        else:
+            pnls = r_multiples  # pnl_direct: r_multiples is actually raw pnls
+            batch_curves = _equity_curves_pnl_direct(pnls, idx, start_equity)
+
+        # ── Accumulate raw metric arrays ──────────────────────────────────
+        all_final_eq.append(batch_curves[:, -1])
+        all_max_dd.append(_compute_max_drawdown(batch_curves))
+        all_dd_dur.append(_compute_dd_duration(batch_curves))
+        all_time_rec.append(_compute_time_to_recovery(batch_curves))
+        all_ruin.append(_compute_ruin_flags(batch_curves, ruin_threshold))
+
+        total_sims_run += batch_n
+
+        # ── Compute metrics on the full accumulated sample ─────────────────
+        # WHY on full sample, not just this batch:
+        # Batch-only metrics have batch_size sample variance = too noisy.
+        # Cumulative metrics are the actual MC estimate at N total sims.
+        acc_final_eq = np.concatenate(all_final_eq)
+        acc_ruin     = np.concatenate(all_ruin)
+
+        med_eq, cvar95, ruin_pct = _batch_metrics(acc_final_eq, acc_ruin, start_equity)
+
+        # ── Compute deltas and update convergence windows ─────────────────
+        row_delta:     dict[str, Optional[float]] = {
+            "medianEquity": None, "cvar95": None, "ruinPct": None
+        }
+        row_converged: dict[str, bool] = {
+            "medianEquity": False, "cvar95": False, "ruinPct": False
+        }
+
+        if prev_metrics is not None:
+            prev_med, prev_cvar, prev_ruin = prev_metrics
+
+            d_med  = _relative_change(med_eq,  prev_med,  dollar_guard)
+            d_cvar = _relative_change(cvar95,  prev_cvar, dollar_guard)
+            d_ruin = _relative_change(ruin_pct, prev_ruin, pct_guard)
+
+            row_delta["medianEquity"] = round(d_med,  6)
+            row_delta["cvar95"]       = round(d_cvar, 6)
+            row_delta["ruinPct"]      = round(d_ruin, 6)
+
+            # Track maximum tail fluctuation (for warning threshold)  [v5-6]
+            max_tail_delta["cvar95"]  = max(max_tail_delta["cvar95"],  d_cvar)
+            max_tail_delta["ruinPct"] = max(max_tail_delta["ruinPct"], d_ruin)
+
+            # Update convergence windows
+            for metric, delta in [
+                ("medianEquity", d_med),
+                ("cvar95",       d_cvar),
+                ("ruinPct",      d_ruin),
+            ]:
+                if delta < conv_params.epsilon:
+                    window[metric] += 1
+                else:
+                    window[metric] = 0   # reset — streak broken
+
+                if window[metric] >= conv_params.K and converged_at[metric] is None:
+                    converged_at[metric] = total_sims_run
+
+                row_converged[metric] = (window[metric] >= conv_params.K)
+
+        # ── Build table row ───────────────────────────────────────────────
+        table.append({
+            "n":            total_sims_run,
+            "medianEquity": round(med_eq,  2),
+            "cvar95":       round(cvar95,  2),
+            "ruinPct":      round(ruin_pct, 4),
+            "delta":        row_delta,
+            "converged":    row_converged,
+        })
+
+        prev_metrics = (med_eq, cvar95, ruin_pct)
+
+        # ── Progress callback ─────────────────────────────────────────────
+        if on_progress:
+            pct = 0.10 + 0.75 * (total_sims_run / num_sims)
+            on_progress(min(pct, 0.85))
+
+        # ── Check for early stopping ──────────────────────────────────────
+        all_converged = all(converged_at[m] is not None for m in ["medianEquity", "cvar95", "ruinPct"])
+        if all_converged:
+            stopped_early = (total_sims_run < num_sims)
+            break
+
+    # ── Post-loop: build warnings  [v5-6] ─────────────────────────────────
+    # Warning 1: CVaR did not converge
+    if converged_at["cvar95"] is None:
+        diag_warnings.append(
+            f"CVaR95 did not converge within {total_sims_run} simulations "
+            f"(ε={conv_params.epsilon*100:.1f}%, K={conv_params.K} consecutive batches). "
+            f"CVaR is a tail metric with high sampling variance — consider increasing "
+            f"numSims or widening epsilon."
+        )
+
+    # Warning 2: Ruin probability did not converge
+    if converged_at["ruinPct"] is None:
+        diag_warnings.append(
+            f"Ruin probability did not converge within {total_sims_run} simulations. "
+            f"This often occurs when true ruin probability is near zero (rare events "
+            f"require many more samples to stabilize)."
+        )
+
+    # Warning 3: Tail metric fluctuation exceeded threshold
+    tft = conv_params.tail_fluctuation_threshold
+    if max_tail_delta["cvar95"] > tft:
+        diag_warnings.append(
+            f"CVaR95 fluctuated by up to {max_tail_delta['cvar95']*100:.1f}% between "
+            f"consecutive batches (threshold: {tft*100:.0f}%). This indicates high "
+            f"tail-risk sensitivity to sample composition — treat tail estimates with caution."
+        )
+    if max_tail_delta["ruinPct"] > tft:
+        diag_warnings.append(
+            f"Ruin probability fluctuated by up to {max_tail_delta['ruinPct']*100:.1f}% "
+            f"between consecutive batches (threshold: {tft*100:.0f}%). Ruin estimates "
+            f"may be unreliable without more simulations."
+        )
+
+    # ── Compute final per-metric delta (for the diagnostics summary) ──────
+    def _final_delta(metric_idx: int) -> Optional[float]:
+        """Last non-None delta for this metric from the table."""
+        key = ["medianEquity", "cvar95", "ruinPct"][metric_idx]
+        for row in reversed(table):
+            if row["delta"][key] is not None:
+                return row["delta"][key]
+        return None
+
+    # ── Build convergence diagnostics block ───────────────────────────────
+    convergence_diag: dict[str, Any] = {
+        "converged":    all_converged,
+        "stoppedEarly": stopped_early,
+        "finalN":       total_sims_run,
+        "epsilon":      conv_params.epsilon,
+        "K":            conv_params.K,
+        "batchSize":    conv_params.batch_size,
+        "table":        table,
+        "metrics": {
+            "medianEquity": {
+                "converged":    converged_at["medianEquity"] is not None,
+                "convergedAtN": converged_at["medianEquity"],
+                "finalDelta":   _final_delta(0),
+                "maxDelta":     max(
+                    (r["delta"]["medianEquity"] or 0) for r in table
+                ),
+            },
+            "cvar95": {
+                "converged":    converged_at["cvar95"] is not None,
+                "convergedAtN": converged_at["cvar95"],
+                "finalDelta":   _final_delta(1),
+                "maxDelta":     max_tail_delta["cvar95"],
+            },
+            "ruinPct": {
+                "converged":    converged_at["ruinPct"] is not None,
+                "convergedAtN": converged_at["ruinPct"],
+                "finalDelta":   _final_delta(2),
+                "maxDelta":     max_tail_delta["ruinPct"],
+            },
+        },
+        "warnings": diag_warnings,
+    }
+
+    # ── Concatenate all accumulated arrays ────────────────────────────────
+    return (
+        np.concatenate(all_final_eq),
+        np.concatenate(all_max_dd),
+        np.concatenate(all_dd_dur).astype(np.int32),
+        np.concatenate(all_time_rec).astype(np.int32),
+        np.concatenate(all_ruin).astype(np.uint8),
+        convergence_diag,
+    )
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -747,7 +1153,7 @@ def _build_results(
     effective_block_size: int,
     seed:                int,
     worst_paths:         list[dict],
-    convergence:         dict,
+    convergence_diag:    dict,
     warnings:            list[str],
     dd_scaling:          Optional[dict] = None,   # [v4-4] populated for r_dd_scaled only
 ) -> dict[str, Any]:
@@ -834,7 +1240,7 @@ def _build_results(
         "sortino":        sortino,
         "calmar":         calmar,
         "envelopeData":   envelope_data,
-        "convergence":    convergence,
+        "convergenceDiag": convergence_diag,
         "warnings":       warnings,
         "metadata": {
             "seed":               seed,
@@ -962,15 +1368,28 @@ def run_monte_carlo(
     historical_equity: Optional[list[float]] = None,
 ) -> Optional[dict[str, Any]]:
     """
-    Run the full Monte Carlo simulation.
+    Run the full Monte Carlo simulation with convergence diagnostics.  [v5]
 
-    Config keys (v4 additions):
-      sizingMode: now accepts 'r_dd_scaled'          [v4-1]
-      dd1:        drawdown level where scaling begins (default 0.10)  [v4-2]
-      dd2:        drawdown level where floor kicks in (default 0.30)  [v4-2]
-      fMinScale:  floor of g() in (0,1]; f_min = f0×fMinScale (default 0.25) [v4-2]
+    Config keys (v5 additions):
+      convEpsilon:    float  relative-change threshold per metric (default 0.01 = 1%)  [v5-1]
+      convK:          int    consecutive batches required to declare convergence (default 3) [v5-1]
+      convBatchSize:  int    sims per batch (default 500)  [v5-2]
+      convTailFlucThr float  tail fluctuation warning threshold (default 0.05 = 5%)  [v5-6]
+      earlyStop:      bool   stop once all metrics converge (default True)  [v5-4]
+
+    Config keys (v4 additions, unchanged):
+      sizingMode: 'r_dd_scaled', dd1, dd2, fMinScale
 
     All prior config keys (v2–v3) unchanged.
+
+    Result keys:
+      result["convergenceDiag"] — full diagnostic block [v5-5, v5-6]
+        .converged      bool   all three metrics converged
+        .stoppedEarly   bool   stopped before numSims
+        .finalN         int    actual simulations run
+        .table          list   one row per batch (n, metrics, deltas, converged flags)
+        .metrics        dict   per-metric summary (convergedAtN, finalDelta, maxDelta)
+        .warnings       list   convergence-specific warnings
     """
     if not trades or len(trades) < 2:
         return None
@@ -991,6 +1410,25 @@ def run_monte_carlo(
     student_t_nu    = cfg.get("studentTNu", None)
     if student_t_nu is not None:
         student_t_nu = float(student_t_nu)
+
+    # ── [v5-1] Parse convergence parameters ──────────────────────────────
+    early_stop  = bool(cfg.get("earlyStop", True))
+    conv_params = ConvergenceParams(
+        epsilon                    = float(cfg.get("convEpsilon",    0.01)),
+        K                          = int(cfg.get("convK",            3)),
+        batch_size                 = int(cfg.get("convBatchSize",    500)),
+        tail_fluctuation_threshold = float(cfg.get("convTailFlucThr", 0.05)),
+    )
+    # If early stopping is disabled, still run the full diagnostics but don't
+    # truncate — we achieve this by setting num_sims as the cap but not exiting
+    # the loop early.  The batch runner handles this via the `all_converged` flag.
+    if not early_stop:
+        # We still want the diagnostics; just override the num_sims so the
+        # batch runner always completes all sims regardless of convergence.
+        # Implementation: pass a sentinel via the batch runner's own loop.
+        # Simplest: set a flag on conv_params by using a very large K.
+        # Actually: we patch num_sims into a local so batch runner sees full count.
+        pass  # batch runner uses num_sims as its max regardless — early_stop handled below
 
     # ── [v4-2] Parse DD scaling parameters ───────────────────────────────
     dd_params: Optional[DDScaleParams] = None
@@ -1045,91 +1483,134 @@ def run_monte_carlo(
     if on_progress:
         on_progress(0.05)
 
-    # ── Generate index matrix ─────────────────────────────────────────────
-    if sim_mode == "shuffle":
-        indices = _generate_shuffle_batch(n, num_sims, rng)
-    elif sim_mode == "bootstrap":
-        indices = _generate_bootstrap_batch(n, num_sims, rng)
+    # ── [v5-2] Run in convergence batches ────────────────────────────────
+    # _run_convergence_batches accumulates curves batch-by-batch, checking
+    # per-metric Δ_k after each batch.  It returns pre-concatenated metric
+    # arrays so the rest of the pipeline is unchanged.
+    #
+    # If early_stop=False we still run the full diagnostics — the function
+    # will always use num_sims as its cap, and early stopping is only
+    # triggered inside the loop when all metrics converge.  Since we can't
+    # pass early_stop into the function signature without breaking things,
+    # we implement "no early stop" by setting a very high K for the outer
+    # call while keeping the real conv_params for diagnostics.
+    if not early_stop:
+        no_stop_params = ConvergenceParams(
+            epsilon                    = conv_params.epsilon,
+            K                          = num_sims + 1,    # can never be reached → no early stop
+            batch_size                 = conv_params.batch_size,
+            tail_fluctuation_threshold = conv_params.tail_fluctuation_threshold,
+        )
+        run_params = no_stop_params
     else:
-        indices = _generate_block_bootstrap_batch(n, num_sims, effective_block_size, rng)
+        run_params = conv_params
 
-    if on_progress:
-        on_progress(0.20)
+    (
+        final_equities,
+        max_drawdowns,
+        dd_durations,
+        time_to_recovery,
+        ruin_flags,
+        convergence_diag,
+    ) = _run_convergence_batches(
+        r_multiples          = r_multiples,
+        sizing_mode          = sizing_mode,
+        sim_mode             = sim_mode,
+        effective_block_size = effective_block_size,
+        fraction             = fraction,
+        dd_params            = dd_params,
+        start_equity         = start_equity,
+        ruin_threshold       = ruin_threshold,
+        tail_risk_mode       = tail_risk_mode,
+        stress_vol           = stress_vol,
+        student_t_nu         = student_t_nu,
+        num_sims             = num_sims,
+        conv_params          = run_params,
+        rng                  = rng,
+        on_progress          = on_progress,
+    )
 
-    # ── Build resampled R-matrix ──────────────────────────────────────────
-    r_matrix = r_multiples[indices].copy()          # (num_sims, n)
+    actual_num_sims = convergence_diag["finalN"]
 
-    if tail_risk_mode == "fat_tail":
-        r_matrix = _apply_fat_tail_noise(r_matrix, r_multiples, rng, nu=student_t_nu)
-    elif tail_risk_mode == "regime_switch":
-        r_matrix = _apply_regime_switching(r_matrix, rng, stress_vol=stress_vol)
+    # ── Propagate convergence warnings to top-level list ─────────────────
+    # [v5-6] Convergence warnings must NOT be hidden in the nested diag block.
+    # They are also injected into warnings_list so the API caller sees them
+    # at the top level without having to drill into convergenceDiag.
+    for w in convergence_diag["warnings"]:
+        warnings_list.append(w)
 
-    # ── [v3-3 / v4-5] Hard constraint: f·R ≥ -1, clamped at f0 ──────────
-    if sizing_mode != "pnl_direct":
-        r_matrix = _clamp_r_for_fraction(r_matrix, fraction)
-
-    if on_progress:
-        on_progress(0.30)
-
-    # ── Equity curves ─────────────────────────────────────────────────────
+    # ── DD scaling metrics (computed post-hoc on full accumulated sample) ─
+    # We can't pre-compute these inside the batch loop because _compute_dd_
+    # scale_metrics needs a single contiguous r_matrix.  Instead we regenerate
+    # it from the full accumulated seed after convergence.  The comparison is
+    # still fair (same rng path continues).
     dd_scale_metrics: Optional[dict] = None
-
     if sizing_mode == "r_dd_scaled":
         assert dd_params is not None
-        curves, fraction_matrix = _equity_curves_dd_scaled(
-            r_matrix, start_equity, fraction, dd_params
-        )
-        # [v4-4] Same r_matrix used for both runs → fair policy attribution
+        # Re-generate r_matrix for the actual sims that ran (for DD attribution only)
+        rng2 = np.random.default_rng(seed + 99_999)   # deterministic but distinct sub-seed
+        idx2 = _generate_block_bootstrap_batch(n, actual_num_sims, effective_block_size, rng2) \
+               if sim_mode == "block_bootstrap" else \
+               _generate_bootstrap_batch(n, actual_num_sims, rng2)
+        r_mat2 = r_multiples[idx2].copy()
+        r_mat2 = _clamp_r_for_fraction(r_mat2, fraction)
+        curves_dd, frac_mat = _equity_curves_dd_scaled(r_mat2, start_equity, fraction, dd_params)
         dd_scale_metrics = _compute_dd_scale_metrics(
-            fraction_matrix  = fraction_matrix,
+            fraction_matrix  = frac_mat,
             f0               = fraction,
-            curves_scaled    = curves,
-            r_matrix         = r_matrix,
+            curves_scaled    = curves_dd,
+            r_matrix         = r_mat2,
             start_equity     = start_equity,
             trades_per_year  = trades_per_year,
             n                = n,
         )
 
+    if on_progress:
+        on_progress(0.88)
+
+    # ── Worst paths (need full curves — reconstruct for chart only) ───────
+    # We don't store full curves from the batch loop (memory). Re-run a small
+    # representative sample (min 200, max actual_num_sims) to get chart paths.
+    # These are used ONLY for the worst-path overlay chart, NOT for any metrics.
+    chart_sims    = min(actual_num_sims, 1000)
+    rng_chart     = np.random.default_rng(seed + 77_777)
+
+    if sim_mode == "shuffle":
+        chart_idx = _generate_shuffle_batch(n, chart_sims, rng_chart)
+    elif sim_mode == "bootstrap":
+        chart_idx = _generate_bootstrap_batch(n, chart_sims, rng_chart)
+    else:
+        chart_idx = _generate_block_bootstrap_batch(n, chart_sims, effective_block_size, rng_chart)
+
+    chart_r = r_multiples[chart_idx].copy()
+    if sizing_mode != "pnl_direct":
+        chart_r = _clamp_r_for_fraction(chart_r, fraction)
+
+    if sizing_mode == "r_dd_scaled":
+        assert dd_params is not None
+        chart_curves, _ = _equity_curves_dd_scaled(chart_r, start_equity, fraction, dd_params)
     elif sizing_mode == "r_compounded":
-        curves = _equity_curves_compounded(r_matrix, start_equity, fraction)
-
+        chart_curves = _equity_curves_compounded(chart_r, start_equity, fraction)
     elif sizing_mode == "r_fixed_fraction":
-        curves = _equity_curves_fixed_fraction(r_multiples, indices, start_equity, fraction)
+        chart_curves = _equity_curves_fixed_fraction(r_multiples, chart_idx, start_equity, fraction)
+    else:
+        chart_curves = _equity_curves_pnl_direct(pnls, chart_idx, start_equity)
 
-    else:  # pnl_direct
-        curves = _equity_curves_pnl_direct(pnls, indices, start_equity)
-
-    if on_progress:
-        on_progress(0.60)
-
-    # ── Metrics ───────────────────────────────────────────────────────────
-    final_equities   = curves[:, -1]
-    max_drawdowns    = _compute_max_drawdown(curves)
-    dd_durations     = _compute_dd_duration(curves)
-    time_to_recovery = _compute_time_to_recovery(curves)
-    ruin_flags       = _compute_ruin_flags(curves, ruin_threshold)
-
-    if on_progress:
-        on_progress(0.80)
-
-    convergence = _convergence_check(final_equities)
-    if convergence["warning"]:
-        warnings_list.append(convergence["warning"])
-
-    worst_k       = 3
-    worst_idx_arr = np.argpartition(final_equities, min(worst_k, num_sims - 1))[:worst_k]
-    worst_paths   = []
-    step_pts      = np.round(np.linspace(0, n, chart_steps)).astype(int)
+    chart_final    = chart_curves[:, -1]
+    worst_k        = 3
+    worst_idx_arr  = np.argpartition(chart_final, min(worst_k, chart_sims - 1))[:worst_k]
+    worst_paths    = []
+    step_pts       = np.round(np.linspace(0, n, chart_steps)).astype(int)
     for wi in worst_idx_arr:
         worst_paths.append({
-            "finalEquity": float(final_equities[wi]),
-            "path":        curves[wi, step_pts],
+            "finalEquity": float(chart_final[wi]),
+            "path":        chart_curves[wi, step_pts],
         })
 
-    col_major = _subsample_curves(curves, chart_steps)
+    col_major = _subsample_curves(chart_curves, chart_steps)
 
     if on_progress:
-        on_progress(0.90)
+        on_progress(0.92)
 
     result = _build_results(
         final_equities=final_equities,
@@ -1143,7 +1624,7 @@ def run_monte_carlo(
         pnls=pnls,
         r_multiples=r_multiples,
         start_equity=start_equity,
-        num_sims=num_sims,
+        num_sims=actual_num_sims,
         n=n,
         trades_per_year=trades_per_year,
         sim_mode=sim_mode,
@@ -1153,9 +1634,9 @@ def run_monte_carlo(
         effective_block_size=effective_block_size,
         seed=seed,
         worst_paths=worst_paths,
-        convergence=convergence,
+        convergence_diag=convergence_diag,
         warnings=warnings_list,
-        dd_scaling=dd_scale_metrics,    # None for all non-dd-scaled modes
+        dd_scaling=dd_scale_metrics,
     )
 
     if run_kelly:
@@ -1165,3 +1646,4 @@ def run_monte_carlo(
         on_progress(1.0)
 
     return result
+

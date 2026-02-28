@@ -75,7 +75,37 @@ class SimConfig(BaseModel):
     stressVol:     float = Field(2.5,    ge=1.0,  le=10.0)
     studentTNu:    Optional[float] = Field(None,  ge=3.0, le=30.0)
 
-    # ── [v4] Drawdown scaling parameters ─────────────────────────────────
+    # ── [v5] Convergence diagnostics parameters ───────────────────────────
+    convEpsilon:    float = Field(
+        default=0.01, gt=0.0, lt=1.0,
+        description=(
+            "Relative-change threshold ε for declaring a metric stable. "
+            "Δ_k < ε for K consecutive batches → metric converged. "
+            "Default 0.01 = 1%."
+        ),
+    )
+    convK:          int   = Field(
+        default=3, ge=1, le=50,
+        description="Consecutive batches that must each satisfy Δ_k < ε.",
+    )
+    convBatchSize:  int   = Field(
+        default=500, ge=10, le=10_000,
+        description="Number of new simulations run per convergence batch.",
+    )
+    convTailFlucThr: float = Field(
+        default=0.05, gt=0.0, lt=1.0,
+        description=(
+            "If any tail metric (CVaR95 or ruin%) changes by more than this "
+            "fraction between consecutive batches, a warning is emitted. Default 0.05 = 5%."
+        ),
+    )
+    earlyStop:      bool  = Field(
+        default=True,
+        description=(
+            "Stop simulations once all tracked metrics converge. "
+            "Set False to always run exactly numSims (diagnostics still computed)."
+        ),
+    )
     # Only used when sizingMode='r_dd_scaled'. Ignored for all other modes.
     dd1:       float = Field(
         default=0.10, ge=0.01, le=0.99,
@@ -137,7 +167,7 @@ class SimulateRequest(BaseModel):
     trades: list[Trade]
     config: SimConfig = Field(default_factory=SimConfig)
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def require_risk_dollars_for_r_modes(cls, values):
         trades = values.get("trades", [])
         config = values.get("config")
@@ -150,7 +180,7 @@ class KellyRequest(BaseModel):
     trades: list[Trade]
     config: SimConfig = Field(default_factory=SimConfig)
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def require_risk_dollars_for_r_modes(cls, values):
         trades = values.get("trades", [])
         config = values.get("config")
