@@ -1203,11 +1203,16 @@ def _build_results(
     sortino    = round(mean_ret / ds_std * math.sqrt(trades_per_year), 2) if ds_std > 0 else 0.0
     calmar     = round(cagr / (md_med * 100), 2) if md_med > 0 else 0.0
 
+    # Use linspace to generate x-axis labels so the final point always equals n
+    # (the true trade count). Integer division in chart_step caused truncation,
+    # e.g. 400 trades with 60 steps → chart_step=6 → last label = 59×6 = 354.
+    step_pts = np.round(np.linspace(0, n, chart_steps)).astype(int)
+
     envelope_data = []
     for t in range(chart_steps):
         c_p5, c_med, c_p95 = _multi_pct(col_major[t], [5, 50, 95])
         envelope_data.append({
-            "t":   t * chart_step,
+            "t":   int(step_pts[t]),
             "p5":  round(c_p5,  2),
             "med": round(c_med, 2),
             "p95": round(c_p95, 2),
