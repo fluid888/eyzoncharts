@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, startTransition, useDeferredValue } from "react";
-import { AreaChart, Area, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, LineChart, Line } from "recharts";
+import { AreaChart, Area, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, LineChart, Line, Brush } from "recharts";
 import { useTheme, useCurrency } from "../contexts";
 import { runMonteCarloAsync, runKellySweep, buildMCResults } from "../utils/mcEngine";
 import AccountFilterBar from "../components/AccountFilterBar";
@@ -1137,11 +1137,20 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                             <div style={{fontSize:10,color:MUTED,marginTop:2}}>
                               Shaded region = P5–P95 across {metadata.numSims.toLocaleString()} simulations · Cyan = median · Red traces = 3 worst outcomes
                             </div>
+                            {envelopeData.length>100&&(
+                              <div style={{fontSize:9,color:MUTED,marginTop:2}}>
+                                {envelopeData.length} chart points · drag brush handles below to zoom · drag center to scroll
+                              </div>
+                            )}
                           </div>
-                          <ResponsiveContainer width="100%" height={240}>
+                          <ResponsiveContainer width="100%" height={envelopeData.length>200?280:240}>
                             <ComposedChart data={envelopeData} margin={{top:4,right:4,left:0,bottom:0}}>
                               <CartesianGrid stroke="#252525" vertical={false}/>
-                              <XAxis dataKey="t" tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false} label={{value:"Trade #",position:"insideBottomRight",offset:-4,fill:MUTED,fontSize:9}}/>
+                              <XAxis dataKey="t" tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false}
+                                label={{value:"Trade #",position:"insideBottomRight",offset:-4,fill:MUTED,fontSize:9}}
+                                interval={Math.max(0, Math.floor(envelopeData.length / 12) - 1)}
+                                tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}
+                              />
                               <YAxis tick={{fill:MUTED,fontSize:9}} axisLine={false} tickLine={false} width={50}
                                 tickFormatter={v=>v>=1000?`${symbol}${(v/1000).toFixed(0)}k`:`${symbol}${v.toFixed(0)}`}/>
                               <Tooltip contentStyle={{background:"#1a1a1a",border:`1px solid ${BORDER}`,borderRadius:7,fontSize:10}}
@@ -1161,6 +1170,18 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                               {/* P5/P95 border lines */}
                               <Line type="monotone" dataKey="p95" name="P95 border" stroke={GREEN} strokeWidth={1} strokeDasharray="5,3" dot={false} strokeOpacity={0.45} isAnimationActive={false}/>
                               <Line type="monotone" dataKey="p5"  name="P5 border"  stroke={RED}   strokeWidth={1} strokeDasharray="5,3" dot={false} strokeOpacity={0.45} isAnimationActive={false}/>
+                              {/* Brush: only shown when there are enough points to benefit from zoom */}
+                              {envelopeData.length > 60 && (
+                                <Brush
+                                  dataKey="t"
+                                  startIndex={Math.max(0, Math.floor(envelopeData.length * 0.55))}
+                                  height={20}
+                                  stroke={BORDER}
+                                  fill={CARD}
+                                  travellerWidth={5}
+                                  tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}
+                                />
+                              )}
                             </ComposedChart>
                           </ResponsiveContainer>
                           <div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:8,padding:"5px 10px",background:CARD2,borderRadius:7}}>

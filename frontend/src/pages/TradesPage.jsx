@@ -72,6 +72,45 @@ function TradesPage({ trades, setTrades, filters, setFilters, setShowModal, fold
   const delOne=(id,e)=>{e.stopPropagation();setTrades(ts=>ts.filter(t=>t.id!==id));setSelected(s=>{const n=new Set(s);n.delete(id);return n;});};
   const setF=(k,v)=>setFilters(f=>({...f,[k]:v}));
 
+  // ── Folder suggestions: detect 4+ trades sharing session + model + status ──
+  const [dismissedSuggestions, setDismissedSuggestions] = useState(new Set());
+
+  const folderSuggestions = useMemo(() => {
+    const groups = {};
+    trades.forEach(t => {
+      const key = `${t.session||"?"}|${t.model||"?"}|${t.status||"?"}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    });
+    return Object.entries(groups)
+      .filter(([key, ts]) => {
+        if (ts.length < 4) return false;
+        if (dismissedSuggestions.has(key)) return false;
+        // skip if an existing folder already covers this exact combo
+        const name = key.replace(/\|/g, " · ");
+        if (folders.some(f => f.name === name)) return false;
+        return true;
+      })
+      .map(([key, ts]) => {
+        const [session, model, status] = key.split("|");
+        return {
+          key,
+          name: `${session} · ${model} · ${status}`,
+          tradeIds: ts.map(t => t.id),
+          count: ts.length,
+          totalPnl: ts.reduce((s, t) => s + t.pnl, 0),
+          winRate: Math.round(ts.filter(t => t.pnl > 0).length / ts.length * 100),
+          tags: [session, model, status].filter(Boolean),
+        };
+      });
+  }, [trades, folders, dismissedSuggestions]);
+
+  const acceptSuggestion = (s) => {
+    const newFolder = { id: Date.now(), name: s.name, tradeIds: s.tradeIds, tags: s.tags };
+    handleCreateFolder(newFolder);
+    setDismissedSuggestions(d => new Set([...d, s.key]));
+  };
+
   const handleCreateFolder = (folder) => {
     const updated = [...folders, folder];
     onFoldersChange(updated);
@@ -205,6 +244,43 @@ function TradesPage({ trades, setTrades, filters, setFilters, setShowModal, fold
       {/* Sidebar */}
       <div style={{width:230,flexShrink:0,borderLeft:`1px solid ${BORDER}`,background:CARD,padding:"14px 12px",display:"flex",flexDirection:"column",gap:14,overflowY:"auto"}}>
         
+        {/* ── Folder suggestions ── */}
+        {folderSuggestions.length > 0 && (
+          <div>
+            <div style={{fontSize:11,color:YELLOW,fontWeight:600,marginBottom:7,display:"flex",alignItems:"center",gap:5}}>
+              <span>💡</span><span>Suggested Folders</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              {folderSuggestions.map(s => (
+                <div key={s.key} style={{
+                  background:YELLOW+"08",border:`1px solid ${YELLOW}33`,
+                  borderRadius:8,padding:"8px 10px",
+                }}>
+                  <div style={{fontSize:10,fontWeight:600,color:YELLOW,marginBottom:4,lineHeight:1.3}}>{s.name}</div>
+                  <div style={{fontSize:9,color:MUTED,marginBottom:7,lineHeight:1.4}}>
+                    {s.count} trades · <span style={{color:s.totalPnl>=0?GREEN:RED,fontWeight:600}}>
+                      {s.totalPnl>=0?"+":""}{s.totalPnl.toFixed(0)}
+                    </span> · {s.winRate}% WR
+                  </div>
+                  <div style={{display:"flex",gap:5}}>
+                    <button
+                      onClick={() => acceptSuggestion(s)}
+                      style={{flex:1,background:YELLOW+"22",border:`1px solid ${YELLOW}55`,color:YELLOW,borderRadius:5,padding:"4px 0",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                      Create
+                    </button>
+                    <button
+                      onClick={() => setDismissedSuggestions(d => new Set([...d, s.key]))}
+                      style={{background:"transparent",border:`1px solid ${BORDER}`,color:MUTED,borderRadius:5,padding:"4px 7px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{borderTop:`1px solid ${BORDER}`,marginTop:10}}/>
+          </div>
+        )}
+
         {/* Folders section */}
         <div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
