@@ -933,6 +933,7 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                           seed:          mcCfg.seed,
                           startEquity:   startEq,
                           runKelly:      false,
+                          earlyStop:     false
                         },
                       };
 
