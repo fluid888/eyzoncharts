@@ -462,9 +462,14 @@ function runMonteCarloAsync(trades, cfg, onProgress, onDone) {
   // ── Chart subsampling parameters ──────────────────────────────────────────
   // Cap to 60 chart points regardless of trade count for render performance.
   // chartStep = how many trades between each sampled equity value.
-  const MAX_CHART_STEPS = 60;
+  // [v5-8] Dynamic chart resolution — mirrors Python mc_engine.py logic
+  // n <= 200  → every trade plotted (full res)
+  // n <= 500  → ~200 pts
+  // n <= 2000 → ~300 pts
+  // n >  2000 → ~400 pts
+  const MAX_CHART_STEPS = n <= 200 ? n + 1 : n <= 500 ? 200 : n <= 2000 ? 300 : 400;
   const chartSteps = Math.min(n + 1, MAX_CHART_STEPS);
-  const chartStep  = Math.max(1, Math.floor(n / (chartSteps - 1)));
+  const chartStep  = Math.max(1, Math.floor(n / Math.max(chartSteps - 1, 1)));
 
   // ── Pre-allocated accumulator arrays ─────────────────────────────────────
   // Float32 is sufficient: 4-byte precision avoids the 8× memory cost of Float64

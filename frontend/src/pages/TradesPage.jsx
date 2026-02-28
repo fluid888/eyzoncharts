@@ -84,7 +84,7 @@ function TradesPage({ trades, setTrades, filters, setFilters, setShowModal, fold
     });
     return Object.entries(groups)
       .filter(([key, ts]) => {
-        if (ts.length < 4) return false;
+        if (ts.length < 6) return false;
         if (dismissedSuggestions.has(key)) return false;
         // skip if an existing folder already covers this exact combo
         const name = key.replace(/\|/g, " · ");
@@ -102,7 +102,8 @@ function TradesPage({ trades, setTrades, filters, setFilters, setShowModal, fold
           winRate: Math.round(ts.filter(t => t.pnl > 0).length / ts.length * 100),
           tags: [session, model, status].filter(Boolean),
         };
-      });
+      })
+      .sort((a, b) => b.count - a.count);
   }, [trades, folders, dismissedSuggestions]);
 
   const acceptSuggestion = (s) => {
