@@ -942,14 +942,14 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                       let fakeP = 0.05;
                       setProgress(fakeP);
                       const fakeTimer = setInterval(() => {
-                        fakeP = Math.min(fakeP + 0.012, 0.85);
+                        fakeP = Math.min(fakeP + 0.012, 0.95);
                         if (!runState.cancelled) setProgress(fakeP);
                       }, 120);
 
-                      // Dedicated AbortController ONLY for 30s network timeout
-                      // NOT stored in mcCancelRef to avoid abort-on-rerun bugs
+                      // Dedicated AbortController for network timeout
+                      // Render free tier can take 30-50s cold start
                       const timeoutCtrl = new AbortController();
-                      const timeoutId   = setTimeout(() => timeoutCtrl.abort(), 30000);
+                      const timeoutId   = setTimeout(() => timeoutCtrl.abort(), 60000);
 
                       try {
                         console.log("📡 POSTing to " + API_URL + "/api/simulate ...");
