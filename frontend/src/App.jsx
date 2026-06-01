@@ -194,6 +194,13 @@ export default function App({ ready }) {
             <Logo size={22}/>
             <span style={{fontSize:12,fontWeight:700,color:WHITE,letterSpacing:"0.04em"}}>EyZonCharts</span>
             <span style={{fontSize:9,color:"#a78bfa",fontWeight:500,marginLeft:2,marginTop:4}}>by TL</span>
+            <span style={{fontSize:14,color:BORDER,marginLeft:6,userSelect:"none"}}>|</span>
+            <span
+              onClick={(e)=>{e.stopPropagation();window.location.href="https://my-trading-page.vercel.app";}}
+              style={{fontSize:13,color:MUTED,cursor:"pointer",transition:"color 0.15s",marginLeft:3}}
+              onMouseEnter={e=>e.currentTarget.style.color=WHITE}
+              onMouseLeave={e=>e.currentTarget.style.color=MUTED}
+            >⚙</span>
           </div>
           <div style={{display:"flex",gap:1,alignItems:"center",flex:1}}>
             {NAV.map(([p,l])=>(
