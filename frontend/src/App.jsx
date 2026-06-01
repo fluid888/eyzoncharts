@@ -28,7 +28,7 @@ let BG="#0e0e0e",CARD="#181818",CARD2="#1e1e1e",BORDER="#2a2a2a",
     GREEN="#2ecc71",RED="#ff6b6b",CYAN="#00d4ff",YELLOW="#f5c842",
     WHITE="#f0f0f0",MUTED="#666",SUBBG="#161616",BLUE="#4a90d9";
 
-export default function App() {
+export default function App({ ready }) {
   const [trades,        setTrades]        = useState(()=>loadFromStorage()||null);
   const [accounts,      setAccounts]      = useState(()=>loadAccounts());
   const [accDetails,    setAccDetails]    = useState(()=>loadAccDetails());
@@ -54,12 +54,12 @@ export default function App() {
   });
 
   useEffect(()=>{
-    if (!welcomeShown && trades && trades.length > 0) {
+    if (ready && !welcomeShown && trades && trades.length > 0) {
       setImportMode("choice");
       setWelcomeShown(true);
       try{ sessionStorage.setItem("eyzon_welcome", "1"); }catch{}
     }
-  }, []);
+  }, [ready]);
 
   // Keep folders in sync when TradesPage updates them
   const handleFoldersChange = useCallback((updated) => {

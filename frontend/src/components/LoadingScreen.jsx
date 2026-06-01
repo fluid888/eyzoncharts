@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-export default function LoadingScreen({ children }) {
+export default function LoadingScreen({ children, onReady }) {
   const text1Ref = useRef(null);
   const text2Ref = useRef(null);
   const [showContent, setShowContent] = useState(false);
@@ -9,9 +9,9 @@ export default function LoadingScreen({ children }) {
   useEffect(() => {
     if (window.innerWidth <= 768) {
       setShowContent(true);
+      if (onReady) onReady();
       return;
     }
-    document.body.style.overflow = "hidden";
 
     const t1 = text1Ref.current;
     const t2 = text2Ref.current;
@@ -40,7 +40,10 @@ export default function LoadingScreen({ children }) {
         t2.style.filter = "";
         t2.style.opacity = "100%";
         setFadeOut(true);
-        setTimeout(() => setShowContent(true), 800);
+        setTimeout(() => {
+          setShowContent(true);
+          if (onReady) onReady();
+        }, 800);
         return;
       }
 
@@ -62,10 +65,7 @@ export default function LoadingScreen({ children }) {
     }
 
     const raf = requestAnimationFrame(animate);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.body.style.overflow = "";
-    };
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   if (showContent) return <>{children}</>;
@@ -147,7 +147,7 @@ export default function LoadingScreen({ children }) {
           0%, 100% { opacity: 0.3; transform: scale(0.8); }
           50% { opacity: 1; transform: scale(1.2); }
         }
-      `}</style>
+      `}      </style>
       {children}
     </>
   );
