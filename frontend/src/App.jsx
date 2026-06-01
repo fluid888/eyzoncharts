@@ -193,6 +193,7 @@ export default function App({ ready }) {
           <div style={{display:"flex",alignItems:"center",gap:7,cursor:"pointer",marginRight:10}} onClick={()=>setPage("dashboard")}>
             <Logo size={22}/>
             <span style={{fontSize:12,fontWeight:700,color:WHITE,letterSpacing:"0.04em"}}>EyZonCharts</span>
+            <span style={{fontSize:9,color:"#a78bfa",fontWeight:500,marginLeft:2,marginTop:4}}>by TL</span>
           </div>
           <div style={{display:"flex",gap:1,alignItems:"center",flex:1}}>
             {NAV.map(([p,l])=>(
