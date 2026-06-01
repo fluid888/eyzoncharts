@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTheme, useCurrency } from "../../contexts";
 
-function ImportChoiceModal({ onImportSettings, onImportAccount, onClose }) {
+function ImportChoiceModal({ onImportSettings, onImportAccount, onCleanSheet, onClose }) {
   const {BG,CARD,CARD2,BORDER,GREEN,RED,CYAN,YELLOW,WHITE,MUTED,SUBBG,BLUE} = useTheme();
   return (
     <div style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.75)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
@@ -49,6 +49,21 @@ function ImportChoiceModal({ onImportSettings, onImportAccount, onClose }) {
                 <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",lineHeight:1.5}}>Start over with a new .eyzon file — replaces all current trades, accounts and settings.</div>
               </div>
               <span style={{marginLeft:"auto",fontSize:18,color:"rgba(0,212,255,0.6)",flexShrink:0}}>→</span>
+            </div>
+          </button>
+          <button onClick={onCleanSheet} style={{
+            width:"100%",padding:"18px 20px",border:"1px solid rgba(255,107,107,0.25)",background:"rgba(255,107,107,0.04)",
+            borderRadius:14,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s",textAlign:"left",
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,107,107,0.10)";e.currentTarget.style.borderColor="rgba(255,107,107,0.5)";}}
+          onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,107,107,0.04)";e.currentTarget.style.borderColor="rgba(255,107,107,0.25)";}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:26}}>🧹</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#f0f0f0",marginBottom:3}}>Start Clean Sheet</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",lineHeight:1.5}}>Clear all trades and start fresh with an empty journal. Accounts and settings are preserved.</div>
+              </div>
+              <span style={{marginLeft:"auto",fontSize:18,color:"rgba(255,107,107,0.6)",flexShrink:0}}>→</span>
             </div>
           </button>
         </div>

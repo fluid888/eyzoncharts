@@ -134,6 +134,11 @@ export default function App({ ready }) {
     setImportMode(null);
   },[]);
 
+  const handleCleanSheet = useCallback(()=>{
+    setTrades([]);
+    setImportMode(null);
+  },[]);
+
   const handleSave = ()=>{
     exportJournal(trades||[], accounts, loadCustomOpts());
     setToast("💾 Journal saved — trades & settings included");
@@ -261,6 +266,7 @@ export default function App({ ready }) {
           <ImportChoiceModal
             onImportSettings={()=>setImportMode("settings")}
             onImportAccount={()=>setImportMode("account")}
+            onCleanSheet={handleCleanSheet}
             onClose={()=>setImportMode(null)}
           />
         </div>
