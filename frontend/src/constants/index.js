@@ -1,4 +1,4 @@
-export const API_URL = import.meta.env.VITE_API_URL || "https://eyzoncharts-api.onrender.com";
+export const API_URL = import.meta.env.VITE_API_URL || "https://eyzoncharts.onrender.com";
 
 export const STORAGE_KEY    = "eyzoncharts_journal_v1";
 export const ACCOUNTS_KEY   = "eyzoncharts_accounts_v1";
