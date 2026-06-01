@@ -48,6 +48,16 @@ export default function App({ ready }) {
   const [folderSuggestTrade, setFolderSuggestTrade] = useState(null);
   const [folders, setFolders] = useState(()=>loadFolders());
   const [accModalOpen, setAccModalOpen] = useState(false);
+  const [showTLNav, setShowTLNav] = useState(false);
+  const TL_LINKS = [
+    {label:"Community", href:"https://my-trading-page.vercel.app/#community"},
+    {label:"FAQ",       href:"https://my-trading-page.vercel.app/#faq"},
+    {label:"Testimonials", href:"https://my-trading-page.vercel.app/#testimonials"},
+    {label:"Socials",   href:"https://my-trading-page.vercel.app"},
+    {label:"Levels",    href:"https://my-trading-page.vercel.app"},
+    {label:"News",      href:"https://my-trading-page.vercel.app"},
+    {label:"Journal",   href:"https://eyzoncharts.vercel.app"},
+  ];
   // Show import choice on first load with saved data (once per session)
   const [welcomeShown, setWelcomeShown] = useState(()=>{
     try{ return sessionStorage.getItem("eyzon_welcome") === "1"; }catch{ return true; }
@@ -185,6 +195,7 @@ export default function App({ ready }) {
         @keyframes folderToastShrink{from{transform:scaleX(1)}to{transform:scaleX(0)}}
         .fade{animation:fadeIn 0.2s ease}
         input[type=checkbox]{cursor:pointer}
+        @keyframes tlNavSlide{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
       `}</style>
 
       <div style={{minHeight:"100vh",background:BG,display:"flex",flexDirection:"column"}}>
@@ -194,13 +205,6 @@ export default function App({ ready }) {
             <Logo size={22}/>
             <span style={{fontSize:12,fontWeight:700,color:WHITE,letterSpacing:"0.04em"}}>EyZonCharts</span>
             <span style={{fontSize:9,color:"#a78bfa",fontWeight:500,marginLeft:2,marginTop:4}}>by TL</span>
-            <span style={{fontSize:14,color:BORDER,marginLeft:6,userSelect:"none"}}>|</span>
-            <span
-              onClick={(e)=>{e.stopPropagation();window.location.href="https://my-trading-page.vercel.app";}}
-              style={{fontSize:13,color:MUTED,cursor:"pointer",transition:"color 0.15s",marginLeft:3}}
-              onMouseEnter={e=>e.currentTarget.style.color=WHITE}
-              onMouseLeave={e=>e.currentTarget.style.color=MUTED}
-            >⚙</span>
           </div>
           <div style={{display:"flex",gap:1,alignItems:"center",flex:1}}>
             {NAV.map(([p,l])=>(
@@ -224,6 +228,35 @@ export default function App({ ready }) {
               💾 Save Journal
             </button>
             <button onClick={()=>setShowModal(true)} style={{background:GREEN,border:"none",borderRadius:6,padding:"5px 11px",color:themeMode==="light"?"#fff":"#061306",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>+ Add Trade</button>
+            <div style={{position:"relative"}}>
+              <button
+                onClick={()=>setShowTLNav(s=>!s)}
+                style={{background:showTLNav?"#a78bfa22":"transparent",border:`1px solid ${showTLNav?"#a78bfa66":BORDER}`,borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,color:showTLNav?"#a78bfa":MUTED,cursor:"pointer",fontFamily:"inherit",letterSpacing:"0.04em",transition:"all 0.15s"}}
+                onMouseEnter={e=>{if(!showTLNav){e.currentTarget.style.borderColor=MUTED;e.currentTarget.style.color=WHITE;}}}
+                onMouseLeave={e=>{if(!showTLNav){e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.color=MUTED;}}}
+              >TL ▾</button>
+              {showTLNav&&(
+                <>
+                  <div style={{position:"fixed",inset:0,zIndex:98}} onClick={()=>setShowTLNav(false)}/>
+                  <div style={{
+                    position:"absolute",top:"calc(100% + 6px)",right:0,zIndex:99,
+                    background:CARD2,border:`1px solid ${BORDER}`,borderRadius:10,
+                    padding:"6px",minWidth:130,
+                    boxShadow:"0 12px 40px rgba(0,0,0,0.5)",
+                    animation:"tlNavSlide 0.2s ease",
+                  }}>
+                    {TL_LINKS.map(l=>(
+                      <a key={l.label} href={l.href} target={l.href.includes("eyzoncharts")?"_blank":"_self"} rel="noopener noreferrer"
+                        style={{display:"block",padding:"7px 12px",borderRadius:6,fontSize:11,color:MUTED,textDecoration:"none",transition:"all 0.12s",fontFamily:"inherit"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background=CARD;e.currentTarget.style.color=WHITE;}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color=MUTED;}}>
+                        {l.label}
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
