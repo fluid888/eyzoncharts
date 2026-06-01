@@ -48,6 +48,18 @@ export default function App() {
   const [folderSuggestTrade, setFolderSuggestTrade] = useState(null);
   const [folders, setFolders] = useState(()=>loadFolders());
   const [accModalOpen, setAccModalOpen] = useState(false);
+  // Show import choice on first load with saved data (once per session)
+  const [welcomeShown, setWelcomeShown] = useState(()=>{
+    try{ return sessionStorage.getItem("eyzon_welcome") === "1"; }catch{ return true; }
+  });
+
+  useEffect(()=>{
+    if (!welcomeShown && trades && trades.length > 0) {
+      setImportMode("choice");
+      setWelcomeShown(true);
+      try{ sessionStorage.setItem("eyzon_welcome", "1"); }catch{}
+    }
+  }, []);
 
   // Keep folders in sync when TradesPage updates them
   const handleFoldersChange = useCallback((updated) => {
@@ -145,15 +157,6 @@ export default function App() {
   ];
 
   if (importMode==="settings") return <ImportModal onImport={handleImport} onFresh={handleFresh}/>;
-  if (importMode==="choice")  return (
-    <ThemeCtx.Provider value={_th}><CurrencyCtx.Provider value={currencyCtxValue}>
-      <ImportChoiceModal
-        onImportSettings={()=>setImportMode("settings")}
-        onImportAccount={()=>setImportMode("account")}
-        onClose={()=>setImportMode(null)}
-      />
-    </CurrencyCtx.Provider></ThemeCtx.Provider>
-  );
   if (importMode==="account") return (
     <ThemeCtx.Provider value={_th}><CurrencyCtx.Provider value={currencyCtxValue}>
       <ImportAccountModal
@@ -253,6 +256,15 @@ export default function App() {
         />
       )}
       {toast&&<Toast message={toast} onDone={()=>setToast(null)}/>}
+      {importMode==="choice"&&(
+        <div style={{position:"fixed",inset:0,zIndex:99999}}>
+          <ImportChoiceModal
+            onImportSettings={()=>setImportMode("settings")}
+            onImportAccount={()=>setImportMode("account")}
+            onClose={()=>setImportMode(null)}
+          />
+        </div>
+      )}
     </>
     </CurrencyCtx.Provider>
     </ThemeCtx.Provider>
