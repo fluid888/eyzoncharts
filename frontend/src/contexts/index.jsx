@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 
 // ── THEMES ───────────────────────────────────────────────────────────────────
-export const DARK_THEME  = { BG:"#0e0e0e",CARD:"#181818",CARD2:"#1e1e1e",BORDER:"#2a2a2a",GREEN:"#2ecc71",RED:"#ff6b6b",CYAN:"#00d4ff",YELLOW:"#f5c842",WHITE:"#f0f0f0",MUTED:"#666",SUBBG:"#161616",BLUE:"#4a90d9",NAV_BG:"#0e0e0e" };
+export const DARK_THEME  = { BG:"#0a0a0a",CARD:"#111111",CARD2:"#1a1a1a",BORDER:"#222222",GREEN:"#22c55e",RED:"#ef4444",CYAN:"#22d3ee",YELLOW:"#eab308",WHITE:"#fafafa",MUTED:"#666",SUBBG:"#0f0f0f",BLUE:"#3b82f6",NAV_BG:"#0a0a0a" };
 export const LIGHT_THEME = { BG:"#f0f3f8",CARD:"#ffffff",CARD2:"#f5f7fa",BORDER:"#dde3ed",GREEN:"#16a34a",RED:"#e63946",CYAN:"#7c3aed",YELLOW:"#f59e0b",WHITE:"#0f172a",MUTED:"#64748b",SUBBG:"#f8f9fb",BLUE:"#3b82f6",NAV_BG:"#ffffff" };
 
 export const ThemeCtx = createContext(DARK_THEME);

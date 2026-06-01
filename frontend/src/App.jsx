@@ -167,10 +167,7 @@ export default function App() {
     <CurrencyCtx.Provider value={currencyCtxValue}>
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0}
         body{background:${BG};color:${WHITE};font-family:'Inter',sans-serif;width:100%}
-        html,#root{width:100%;min-height:100vh}
         ::-webkit-scrollbar{width:4px;height:4px}
         ::-webkit-scrollbar-track{background:${BG}}
         ::-webkit-scrollbar-thumb{background:${BORDER};border-radius:2px}

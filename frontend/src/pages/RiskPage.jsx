@@ -4,6 +4,7 @@ import { useTheme, useCurrency } from "../contexts";
 import { runMonteCarloAsync, runKellySweep, buildMCResults } from "../utils/mcEngine";
 import AccountFilterBar from "../components/AccountFilterBar";
 import { Breadcrumb, StatRow } from "../components/common";
+import { API_URL } from "../constants";
 
 function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setAnalyticsAccount, accDetails }) {
   const {BG,CARD,CARD2,BORDER,GREEN,RED,CYAN,YELLOW,WHITE,MUTED,SUBBG,BLUE} = useTheme();
@@ -951,8 +952,8 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                       const timeoutId   = setTimeout(() => timeoutCtrl.abort(), 30000);
 
                       try {
-                        console.log("📡 POSTing to https://eyzoncharts-production.up.railway.app/api/simulate ...");
-                        const resp = await fetch("https://eyzoncharts-production.up.railway.app/api/simulate", {
+                        console.log("📡 POSTing to " + API_URL + "/api/simulate ...");
+                        const resp = await fetch(API_URL + "/api/simulate", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
                           body:    JSON.stringify(payload),
@@ -976,7 +977,7 @@ function RiskPage({ trades: allTrades, setPage, accounts, analyticsAccount, setA
                         if (mcCfg.runKelly && !runState.cancelled) {
                           try {
                             const kellyPayload = { ...payload, config: { ...payload.config, runKelly: true } };
-                            const kellyResp = await fetch("https://eyzoncharts-production.up.railway.app/api/kelly", {
+                            const kellyResp = await fetch(API_URL + "/api/kelly", {
                               method:  "POST",
                               headers: { "Content-Type": "application/json" },
                               body:    JSON.stringify(kellyPayload),
