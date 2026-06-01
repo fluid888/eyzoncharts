@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { useTheme, useCurrency } from "../../contexts";
 
-function ImportModal({ onImport, onFresh }) {
+function ImportModal({ onImport, onFresh, onCleanSheet }) {
   const {BG,CARD,CARD2,BORDER,GREEN,RED,CYAN,YELLOW,WHITE,MUTED,SUBBG,BLUE} = useTheme();
   const [dragging, setDragging] = useState(false);
   const [error,    setError]    = useState("");
@@ -142,7 +142,19 @@ function ImportModal({ onImport, onFresh }) {
             }}
             onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.08)";e.currentTarget.style.color=WHITE;}}
             onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.04)";e.currentTarget.style.color="rgba(255,255,255,0.5)";}}>
-            Start Fresh
+            Start Fresh (demo)
+          </button>
+          <button
+            onClick={onCleanSheet}
+            style={{
+              flex:1, border:"1px solid rgba(255,107,107,0.2)",
+              background:"rgba(255,107,107,0.05)", color:"rgba(255,107,107,0.6)",
+              borderRadius:10, padding:"11px 0", fontSize:13, cursor:"pointer",
+              fontFamily:"inherit", transition:"all 0.2s",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,107,107,0.12)";e.currentTarget.style.color=RED;e.currentTarget.style.borderColor="rgba(255,107,107,0.5)";}}
+            onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,107,107,0.05)";e.currentTarget.style.color="rgba(255,107,107,0.6)";e.currentTarget.style.borderColor="rgba(255,107,107,0.2)";}}>
+            🧹 Clean Sheet
           </button>
           <button
             onClick={()=>{ try{ window.open("/CSV_to_EyZon_Converter.html","_blank"); }catch(e){} }}

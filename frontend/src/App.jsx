@@ -161,7 +161,7 @@ export default function App({ ready }) {
     ["accounts","🏦 Accounts"],["settings","⚙️ Settings"],
   ];
 
-  if (importMode==="settings") return <ImportModal onImport={handleImport} onFresh={handleFresh}/>;
+  if (importMode==="settings") return <ImportModal onImport={handleImport} onFresh={handleFresh} onCleanSheet={handleCleanSheet}/>;
   if (importMode==="account") return (
     <ThemeCtx.Provider value={_th}><CurrencyCtx.Provider value={currencyCtxValue}>
       <ImportAccountModal
